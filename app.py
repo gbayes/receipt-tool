@@ -3,6 +3,7 @@ import io
 import tempfile
 import shutil
 import logging
+import gc
 from flask import Flask, render_template, request, send_file, flash
 from werkzeug.utils import secure_filename
 from PIL import Image
@@ -26,15 +27,15 @@ UPLOAD_FOLDER = tempfile.mkdtemp()
 ALLOWED_EXTENSIONS = {'png', 'jpg', 'jpeg', 'tiff', 'bmp'}
 
 app.config['UPLOAD_FOLDER'] = UPLOAD_FOLDER
-app.config['MAX_CONTENT_LENGTH'] = 16 * 1024 * 1024  # 16MB max file size
+app.config['MAX_CONTENT_LENGTH'] = 8 * 1024 * 1024  # Reduce to 8MB max file size
 
 def allowed_file(filename):
     return '.' in filename and filename.rsplit('.', 1)[1].lower() in ALLOWED_EXTENSIONS
 
-def compress_image(image, max_size_mb=0.5):
+def compress_image(image, max_size_mb=0.3):
     try:
-        # Start with quality 85 and adjust based on file size
-        quality = 85
+        # Start with quality 80 and adjust based on file size
+        quality = 80
         target_size = max_size_mb * 1024 * 1024  # Convert MB to bytes
         
         # Convert image to RGB if it's not
@@ -42,19 +43,60 @@ def compress_image(image, max_size_mb=0.5):
             image = image.convert('RGB')
         
         # Create a BytesIO object to check size
-        while quality > 10:  # Don't go below quality 10
+        while quality > 15:  # Don't go below quality 15
             buffer = io.BytesIO()
             image.save(buffer, format='JPEG', quality=quality, optimize=True)
             if buffer.tell() <= target_size:
                 buffer.seek(0)
                 return Image.open(buffer)
-            quality -= 5
+            quality -= 10
         
         # If we get here, return the last compressed version
         buffer.seek(0)
         return Image.open(buffer)
     except Exception as e:
         logger.error(f"Error in compress_image: {str(e)}")
+        raise
+    finally:
+        # Force garbage collection
+        gc.collect()
+
+def process_single_image(img_path, c, page_width, page_height, margin):
+    try:
+        # Open and process one image
+        with Image.open(img_path) as img:
+            # Compress the image
+            compressed_img = compress_image(img)
+            
+            # Calculate dimensions
+            max_width = page_width - (2 * margin)
+            max_height = page_height - (2 * margin)
+            img_width, img_height = compressed_img.size
+            
+            # Calculate scaling factors
+            width_ratio = max_width / img_width
+            height_ratio = max_height / img_height
+            scale_factor = min(width_ratio, height_ratio)
+            
+            new_width = img_width * scale_factor
+            new_height = img_height * scale_factor
+            
+            # Center the image
+            x = (page_width - new_width) / 2
+            y = (page_height - new_height) / 2
+            
+            # Add to PDF
+            c.drawImage(ImageReader(compressed_img), x, y, width=new_width, height=new_height)
+            c.showPage()
+            
+            logger.info(f"Processed: {os.path.basename(img_path)}")
+            
+            # Force cleanup
+            compressed_img.close()
+            gc.collect()
+            
+    except Exception as e:
+        logger.error(f"Error processing {os.path.basename(img_path)}: {str(e)}")
         raise
 
 def merge_images_to_pdf(image_files):
@@ -67,52 +109,12 @@ def merge_images_to_pdf(image_files):
         c.setPageCompression(1)  # Enable PDF compression
         
         page_width, page_height = letter
-        
-        # Define margins (in points)
         margin = 40
-        max_width = page_width - (2 * margin)
-        max_height = page_height - (2 * margin)
         
-        # Process each image
+        # Process images one at a time
         for img_path in image_files:
-            try:
-                # Open image
-                img = Image.open(img_path)
-                
-                # Compress the image
-                img = compress_image(img)
-                
-                # Get image dimensions
-                img_width, img_height = img.size
-                
-                # Calculate scaling factors for both width and height
-                width_ratio = max_width / img_width
-                height_ratio = max_height / img_height
-                
-                # Use the smaller ratio to ensure image fits completely
-                scale_factor = min(width_ratio, height_ratio)
-                
-                # Calculate new dimensions
-                new_width = img_width * scale_factor
-                new_height = img_height * scale_factor
-                
-                # Calculate position to center the image
-                x = (page_width - new_width) / 2
-                y = (page_height - new_height) / 2
-                
-                # Convert to RGB if necessary (after compression)
-                if img.mode != 'RGB':
-                    img = img.convert('RGB')
-                
-                # Add image to PDF
-                c.drawImage(ImageReader(img), x, y, width=new_width, height=new_height)
-                c.showPage()
-                
-                logger.info(f"Processed: {os.path.basename(img_path)}")
-                
-            except Exception as e:
-                logger.error(f"Error processing {os.path.basename(img_path)}: {str(e)}")
-                raise
+            process_single_image(img_path, c, page_width, page_height, margin)
+            gc.collect()  # Force garbage collection after each image
         
         # Save PDF
         c.save()
@@ -121,6 +123,8 @@ def merge_images_to_pdf(image_files):
     except Exception as e:
         logger.error(f"Error in merge_images_to_pdf: {str(e)}")
         raise
+    finally:
+        gc.collect()  # Final garbage collection
 
 @app.route('/debug', methods=['GET'])
 def debug():
@@ -215,5 +219,6 @@ def upload_files():
 
 if __name__ == '__main__':
     port = int(os.environ.get('PORT', 10000))
-    logger.info(f"Starting application on port {port}")
-    app.run(host='0.0.0.0', port=port, debug=True) 
+    debug_mode = os.environ.get('FLASK_ENV') == 'development'
+    logger.info(f"Starting application on port {port} with debug={debug_mode}")
+    app.run(host='0.0.0.0', port=port, debug=debug_mode) 

@@ -18,6 +18,15 @@ COPY . .
 # Set environment variables
 ENV PORT=10000
 ENV PYTHONUNBUFFERED=1
+ENV WEB_CONCURRENCY=1
 
-# Start the application
-CMD gunicorn --bind 0.0.0.0:$PORT app:app --log-level debug 
+# Start the application with optimized Gunicorn settings
+CMD gunicorn --bind 0.0.0.0:$PORT \
+    --workers 1 \
+    --threads 2 \
+    --timeout 120 \
+    --keep-alive 5 \
+    --max-requests 50 \
+    --max-requests-jitter 5 \
+    --log-level debug \
+    app:app 
