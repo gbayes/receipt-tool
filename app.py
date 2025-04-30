@@ -27,33 +27,57 @@ UPLOAD_FOLDER = tempfile.mkdtemp()
 ALLOWED_EXTENSIONS = {'png', 'jpg', 'jpeg', 'tiff', 'bmp'}
 
 app.config['UPLOAD_FOLDER'] = UPLOAD_FOLDER
-app.config['MAX_CONTENT_LENGTH'] = 8 * 1024 * 1024  # Reduce to 8MB max file size
+app.config['MAX_CONTENT_LENGTH'] = 5 * 1024 * 1024  # Reduce to 5MB max file size
 
 def allowed_file(filename):
     return '.' in filename and filename.rsplit('.', 1)[1].lower() in ALLOWED_EXTENSIONS
 
-def compress_image(image, max_size_mb=0.3):
+def compress_image(image, max_size_mb=0.2):
     try:
-        # Start with quality 80 and adjust based on file size
-        quality = 80
+        # Start with quality 75 and adjust based on file size
+        quality = 75
         target_size = max_size_mb * 1024 * 1024  # Convert MB to bytes
         
         # Convert image to RGB if it's not
         if image.mode != 'RGB':
             image = image.convert('RGB')
         
+        # Resize image if it's too large (max 1500px on longest side)
+        max_size = 1500
+        if max(image.size) > max_size:
+            ratio = max_size / max(image.size)
+            new_size = tuple(int(dim * ratio) for dim in image.size)
+            image = image.resize(new_size, Image.Resampling.LANCZOS)
+        
         # Create a BytesIO object to check size
-        while quality > 15:  # Don't go below quality 15
+        while quality > 20:  # Don't go below quality 20
             buffer = io.BytesIO()
             image.save(buffer, format='JPEG', quality=quality, optimize=True)
             if buffer.tell() <= target_size:
                 buffer.seek(0)
-                return Image.open(buffer)
-            quality -= 10
+                compressed_img = Image.open(buffer)
+                # Create a new image to break reference to buffer
+                final_img = Image.new('RGB', compressed_img.size)
+                final_img.paste(compressed_img)
+                compressed_img.close()
+                buffer.close()
+                return final_img
+            quality -= 15
+            
+            # Clear buffer and force garbage collection
+            buffer.close()
+            gc.collect()
         
-        # If we get here, return the last compressed version
+        # If we get here, create one final attempt with lowest quality
+        buffer = io.BytesIO()
+        image.save(buffer, format='JPEG', quality=20, optimize=True)
         buffer.seek(0)
-        return Image.open(buffer)
+        compressed_img = Image.open(buffer)
+        final_img = Image.new('RGB', compressed_img.size)
+        final_img.paste(compressed_img)
+        compressed_img.close()
+        buffer.close()
+        return final_img
     except Exception as e:
         logger.error(f"Error in compress_image: {str(e)}")
         raise
@@ -68,32 +92,33 @@ def process_single_image(img_path, c, page_width, page_height, margin):
             # Compress the image
             compressed_img = compress_image(img)
             
-            # Calculate dimensions
-            max_width = page_width - (2 * margin)
-            max_height = page_height - (2 * margin)
-            img_width, img_height = compressed_img.size
-            
-            # Calculate scaling factors
-            width_ratio = max_width / img_width
-            height_ratio = max_height / img_height
-            scale_factor = min(width_ratio, height_ratio)
-            
-            new_width = img_width * scale_factor
-            new_height = img_height * scale_factor
-            
-            # Center the image
-            x = (page_width - new_width) / 2
-            y = (page_height - new_height) / 2
-            
-            # Add to PDF
-            c.drawImage(ImageReader(compressed_img), x, y, width=new_width, height=new_height)
-            c.showPage()
-            
-            logger.info(f"Processed: {os.path.basename(img_path)}")
-            
-            # Force cleanup
-            compressed_img.close()
-            gc.collect()
+            try:
+                # Calculate dimensions
+                max_width = page_width - (2 * margin)
+                max_height = page_height - (2 * margin)
+                img_width, img_height = compressed_img.size
+                
+                # Calculate scaling factors
+                width_ratio = max_width / img_width
+                height_ratio = max_height / img_height
+                scale_factor = min(width_ratio, height_ratio)
+                
+                new_width = img_width * scale_factor
+                new_height = img_height * scale_factor
+                
+                # Center the image
+                x = (page_width - new_width) / 2
+                y = (page_height - new_height) / 2
+                
+                # Add to PDF
+                c.drawImage(ImageReader(compressed_img), x, y, width=new_width, height=new_height)
+                c.showPage()
+                
+                logger.info(f"Processed: {os.path.basename(img_path)}")
+            finally:
+                # Ensure image is closed
+                compressed_img.close()
+                gc.collect()
             
     except Exception as e:
         logger.error(f"Error processing {os.path.basename(img_path)}: {str(e)}")
@@ -101,10 +126,10 @@ def process_single_image(img_path, c, page_width, page_height, margin):
 
 def merge_images_to_pdf(image_files):
     try:
-        # Create PDF in memory
-        output = io.BytesIO()
+        # Create PDF in memory with smaller buffer size
+        output = io.BytesIO(initial_bytes=b'')  # Start with empty buffer
         
-        # Create PDF with compression
+        # Create PDF with maximum compression
         c = canvas.Canvas(output, pagesize=letter)
         c.setPageCompression(1)  # Enable PDF compression
         

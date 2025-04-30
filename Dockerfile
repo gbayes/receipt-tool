@@ -19,14 +19,18 @@ COPY . .
 ENV PORT=10000
 ENV PYTHONUNBUFFERED=1
 ENV WEB_CONCURRENCY=1
+ENV PYTHONHASHSEED=random
+ENV GUNICORN_CMD_ARGS="--preload"
 
 # Start the application with optimized Gunicorn settings
 CMD gunicorn --bind 0.0.0.0:$PORT \
     --workers 1 \
-    --threads 2 \
-    --timeout 120 \
-    --keep-alive 5 \
-    --max-requests 50 \
+    --threads 1 \
+    --timeout 180 \
+    --keep-alive 2 \
+    --max-requests 25 \
     --max-requests-jitter 5 \
+    --worker-class sync \
+    --worker-tmp-dir /dev/shm \
     --log-level debug \
     app:app 
