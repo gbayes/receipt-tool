@@ -176,8 +176,10 @@ def upload_file():
         file.save(filepath)
         
         # Process receipt with OCR
+        logger.info(f"Processing OCR for file: {filename}")
         with Image.open(filepath) as img:
             ocr_result = process_receipt(img)
+        logger.info(f"OCR result for {filename}: {ocr_result}")
         
         # Add file and OCR result to session
         if 'files' not in session:
@@ -189,11 +191,13 @@ def upload_file():
         session['ocr_results'][filepath] = ocr_result
         session.modified = True
         
-        return jsonify({
+        response_data = {
             'success': True,
             'filename': filename,
             'ocr_result': ocr_result
-        })
+        }
+        logger.info(f"Sending response for {filename}: {response_data}")
+        return jsonify(response_data)
     except Exception as e:
         logger.error(f"Error uploading file: {str(e)}")
         return jsonify({'error': str(e)}), 500

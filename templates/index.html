@@ -46,25 +46,37 @@
             display: flex;
             justify-content: space-between;
             align-items: center;
-            padding: 8px;
+            padding: 12px;
             background-color: #f8f9fa;
             border: 1px solid #dee2e6;
             border-radius: 4px;
             margin-bottom: 8px;
         }
-        .file-item .file-info {
+        .file-info {
             flex-grow: 1;
-            margin-right: 10px;
+            display: flex;
+            align-items: center;
+            gap: 10px;
         }
-        .file-item .amount {
+        .file-name {
+            flex-grow: 1;
+        }
+        .amount {
             color: #28a745;
             font-weight: bold;
-            margin-right: 10px;
+            padding: 4px 8px;
+            background-color: #e8f5e9;
+            border-radius: 4px;
+            min-width: 80px;
+            text-align: right;
         }
-        .file-item .error {
+        .error {
             color: #dc3545;
             font-size: 0.9em;
             font-style: italic;
+            padding: 4px 8px;
+            background-color: #fff3f3;
+            border-radius: 4px;
         }
         .file-item .remove-file {
             color: #dc3545;
@@ -177,7 +189,7 @@
 
     <script>
         let uploadedFiles = [];
-        let ocrResults = {};  // Store OCR results
+        let ocrResults = {};
         const maxFileSize = 2 * 1024 * 1024; // 2MB
         
         function showError(message) {
@@ -192,24 +204,30 @@
         function updateFileList() {
             const fileList = document.getElementById('fileList');
             fileList.innerHTML = '';
+            
+            console.log('OCR Results:', ocrResults); // Debug log
+            
             uploadedFiles.forEach((file, index) => {
                 const fileItem = document.createElement('div');
                 fileItem.className = 'file-item';
                 
-                const ocr = ocrResults[file.name] || {};
-                let amountHtml = '';
+                const ocr = ocrResults[file.name];
+                console.log(`OCR result for ${file.name}:`, ocr); // Debug log
                 
-                if (ocr.success) {
-                    amountHtml = `<span class="amount">$${ocr.total.toFixed(2)}</span>`;
-                } else if (ocr.error) {
-                    amountHtml = `<span class="error">${ocr.error}</span>`;
+                let amountHtml = '';
+                if (ocr && ocr.success && ocr.total !== undefined) {
+                    amountHtml = `<div class="amount">$${ocr.total.toFixed(2)}</div>`;
+                } else if (ocr && ocr.error) {
+                    amountHtml = `<div class="error">${ocr.error}</div>`;
                 }
                 
                 fileItem.innerHTML = `
                     <div class="file-info">
-                        <span>${file.name}</span>
-                        <br>
-                        <small>(${(file.size / 1024).toFixed(1)}KB)</small>
+                        <div class="file-name">
+                            <strong>${file.name}</strong>
+                            <br>
+                            <small>(${(file.size / 1024).toFixed(1)}KB)</small>
+                        </div>
                         ${amountHtml}
                     </div>
                     <button class="remove-file" onclick="removeFile(${index})">×</button>
@@ -269,11 +287,12 @@
                     throw new Error(result.error || 'Upload failed');
                 }
                 
-                // Store OCR result
+                console.log('Upload response:', result); // Debug log
                 ocrResults[file.name] = result.ocr_result;
                 
                 return result;
             } catch (error) {
+                console.error('Upload error:', error); // Debug log
                 throw new Error(`Failed to upload ${file.name}: ${error.message}`);
             }
         }
