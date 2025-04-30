@@ -45,7 +45,7 @@ def extract_amounts(text):
         clean_amount = amount.replace('$', '').replace(',', '')
         try:
             float_amounts.append(float(clean_amount))
-            logger.debug(f"Converted amount {amount} to {float(clean_amount}")
+            logger.debug(f"Converted amount {amount} to {clean_amount}")
         except ValueError:
             logger.warning(f"Could not convert amount: {amount}")
             continue
