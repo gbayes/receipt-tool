@@ -172,6 +172,7 @@
         // Handle drag and drop
         dropZone.addEventListener('dragover', (e) => {
             e.preventDefault();
+            e.stopPropagation();
             dropZone.classList.add('dragover');
         });
 
@@ -181,8 +182,18 @@
 
         dropZone.addEventListener('drop', (e) => {
             e.preventDefault();
+            e.stopPropagation();
             dropZone.classList.remove('dragover');
-            handleFiles(e.dataTransfer.files);
+            
+            // Create a new FileList from the dropped files
+            const dt = new DataTransfer();
+            Array.from(e.dataTransfer.files).forEach(file => {
+                dt.items.add(file);
+            });
+            
+            // Set the files to the input
+            fileInput.files = dt.files;
+            handleFiles(fileInput.files);
         });
 
         // Handle click to upload
@@ -201,17 +212,39 @@
                 li.className = 'file-item';
                 li.innerHTML = `
                     <span>${file.name}</span>
-                    <span class="remove-file">✕</span>
+                    <span class="remove-file" data-name="${file.name}">✕</span>
                 `;
                 fileList.appendChild(li);
+            });
+
+            // Add click handlers for remove buttons
+            document.querySelectorAll('.remove-file').forEach(button => {
+                button.addEventListener('click', (e) => {
+                    const fileName = e.target.dataset.name;
+                    const dt = new DataTransfer();
+                    
+                    // Copy all files except the removed one
+                    Array.from(fileInput.files).forEach(file => {
+                        if (file.name !== fileName) {
+                            dt.items.add(file);
+                        }
+                    });
+                    
+                    // Update the file input
+                    fileInput.files = dt.files;
+                    handleFiles(fileInput.files);
+                });
             });
         }
 
         // Show loading spinner during form submission
-        uploadForm.addEventListener('submit', () => {
-            if (fileInput.files.length > 0) {
-                loading.style.display = 'block';
+        uploadForm.addEventListener('submit', (e) => {
+            if (fileInput.files.length === 0) {
+                e.preventDefault();
+                alert('Please select at least one file.');
+                return;
             }
+            loading.style.display = 'block';
         });
     </script>
 </body>
