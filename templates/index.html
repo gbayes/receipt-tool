@@ -128,11 +128,23 @@
             0% { transform: rotate(0deg); }
             100% { transform: rotate(360deg); }
         }
+
+        .error-message {
+            color: #dc3545;
+            background-color: #f8d7da;
+            border: 1px solid #f5c6cb;
+            padding: 10px;
+            margin: 10px 0;
+            border-radius: 4px;
+            display: none;
+        }
     </style>
 </head>
 <body>
     <div class="container">
         <h1>Receipt Merger</h1>
+        
+        <div id="errorMessage" class="error-message"></div>
         
         {% with messages = get_flashed_messages() %}
             {% if messages %}
@@ -147,7 +159,7 @@
         <form id="uploadForm" action="{{ url_for('upload_files') }}" method="post" enctype="multipart/form-data">
             <div class="upload-area" id="dropZone">
                 <div class="upload-icon">📄</div>
-                <p>Drag and drop image files here<br>or click to select files</p>
+                <p>Drag and drop image files here<br>or click to select files<br><small>(Max 5MB per file)</small></p>
                 <input type="file" id="fileInput" name="files[]" multiple accept=".png,.jpg,.jpeg,.tiff,.bmp" style="display: none;">
             </div>
             
@@ -163,11 +175,36 @@
     </div>
 
     <script>
+        const MAX_FILE_SIZE = 5 * 1024 * 1024; // 5MB in bytes
         const dropZone = document.getElementById('dropZone');
         const fileInput = document.getElementById('fileInput');
         const fileList = document.getElementById('fileList');
         const uploadForm = document.getElementById('uploadForm');
         const loading = document.getElementById('loading');
+        const errorMessage = document.getElementById('errorMessage');
+
+        function showError(message) {
+            errorMessage.textContent = message;
+            errorMessage.style.display = 'block';
+            setTimeout(() => {
+                errorMessage.style.display = 'none';
+            }, 5000);
+        }
+
+        function validateFile(file) {
+            if (file.size > MAX_FILE_SIZE) {
+                showError(`File "${file.name}" is too large. Maximum size is 5MB.`);
+                return false;
+            }
+            
+            const allowedTypes = ['image/png', 'image/jpeg', 'image/tiff', 'image/bmp'];
+            if (!allowedTypes.includes(file.type)) {
+                showError(`File "${file.name}" is not a supported image type.`);
+                return false;
+            }
+            
+            return true;
+        }
 
         // Handle drag and drop
         dropZone.addEventListener('dragover', (e) => {
@@ -185,15 +222,14 @@
             e.stopPropagation();
             dropZone.classList.remove('dragover');
             
-            // Create a new FileList from the dropped files
-            const dt = new DataTransfer();
-            Array.from(e.dataTransfer.files).forEach(file => {
-                dt.items.add(file);
-            });
+            const validFiles = Array.from(e.dataTransfer.files).filter(validateFile);
             
-            // Set the files to the input
-            fileInput.files = dt.files;
-            handleFiles(fileInput.files);
+            if (validFiles.length > 0) {
+                const dt = new DataTransfer();
+                validFiles.forEach(file => dt.items.add(file));
+                fileInput.files = dt.files;
+                handleFiles(fileInput.files);
+            }
         });
 
         // Handle click to upload
@@ -202,7 +238,14 @@
         });
 
         fileInput.addEventListener('change', () => {
-            handleFiles(fileInput.files);
+            const validFiles = Array.from(fileInput.files).filter(validateFile);
+            
+            if (validFiles.length > 0) {
+                const dt = new DataTransfer();
+                validFiles.forEach(file => dt.items.add(file));
+                fileInput.files = dt.files;
+                handleFiles(fileInput.files);
+            }
         });
 
         function handleFiles(files) {
@@ -211,7 +254,7 @@
                 const li = document.createElement('li');
                 li.className = 'file-item';
                 li.innerHTML = `
-                    <span>${file.name}</span>
+                    <span>${file.name} (${(file.size / (1024 * 1024)).toFixed(1)}MB)</span>
                     <span class="remove-file" data-name="${file.name}">✕</span>
                 `;
                 fileList.appendChild(li);
@@ -223,28 +266,58 @@
                     const fileName = e.target.dataset.name;
                     const dt = new DataTransfer();
                     
-                    // Copy all files except the removed one
                     Array.from(fileInput.files).forEach(file => {
                         if (file.name !== fileName) {
                             dt.items.add(file);
                         }
                     });
                     
-                    // Update the file input
                     fileInput.files = dt.files;
                     handleFiles(fileInput.files);
                 });
             });
         }
 
-        // Show loading spinner during form submission
-        uploadForm.addEventListener('submit', (e) => {
+        // Form submission
+        uploadForm.addEventListener('submit', async (e) => {
+            e.preventDefault();
+            
             if (fileInput.files.length === 0) {
-                e.preventDefault();
-                alert('Please select at least one file.');
+                showError('Please select at least one file.');
                 return;
             }
+
             loading.style.display = 'block';
+            
+            try {
+                const formData = new FormData(uploadForm);
+                const response = await fetch(uploadForm.action, {
+                    method: 'POST',
+                    body: formData
+                });
+                
+                if (response.ok) {
+                    const blob = await response.blob();
+                    const url = window.URL.createObjectURL(blob);
+                    const a = document.createElement('a');
+                    a.href = url;
+                    a.download = 'merged_receipts.pdf';
+                    document.body.appendChild(a);
+                    a.click();
+                    window.URL.revokeObjectURL(url);
+                    document.body.removeChild(a);
+                    
+                    // Clear the form
+                    fileInput.value = '';
+                    fileList.innerHTML = '';
+                } else {
+                    throw new Error(`Server returned ${response.status}: ${response.statusText}`);
+                }
+            } catch (error) {
+                showError(`Error: ${error.message}`);
+            } finally {
+                loading.style.display = 'none';
+            }
         });
     </script>
 </body>
