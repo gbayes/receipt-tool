@@ -4,7 +4,8 @@ import tempfile
 import shutil
 import logging
 import gc
-from flask import Flask, render_template, request, send_file, flash
+import uuid
+from flask import Flask, render_template, request, send_file, flash, jsonify, session
 from werkzeug.utils import secure_filename
 from PIL import Image
 from reportlab.pdfgen import canvas
@@ -27,50 +28,48 @@ UPLOAD_FOLDER = tempfile.mkdtemp()
 ALLOWED_EXTENSIONS = {'png', 'jpg', 'jpeg', 'tiff', 'bmp'}
 
 app.config['UPLOAD_FOLDER'] = UPLOAD_FOLDER
-app.config['MAX_CONTENT_LENGTH'] = 5 * 1024 * 1024  # Reduce to 5MB max file size
+app.config['MAX_CONTENT_LENGTH'] = 2 * 1024 * 1024  # 2MB max file size
+app.config['PERMANENT_SESSION_LIFETIME'] = 1800  # 30 minutes
 
 def allowed_file(filename):
     return '.' in filename and filename.rsplit('.', 1)[1].lower() in ALLOWED_EXTENSIONS
 
-def compress_image(image, max_size_mb=0.2):
+def compress_image(image, max_size_mb=0.1):  # Reduced to 100KB target
     try:
-        # Start with quality 75 and adjust based on file size
-        quality = 75
+        # Start with quality 60 and adjust based on file size
+        quality = 60
         target_size = max_size_mb * 1024 * 1024  # Convert MB to bytes
         
         # Convert image to RGB if it's not
         if image.mode != 'RGB':
             image = image.convert('RGB')
         
-        # Resize image if it's too large (max 1500px on longest side)
-        max_size = 1500
+        # Resize image if it's too large (max 1200px on longest side)
+        max_size = 1200  # Reduced from 1500px
         if max(image.size) > max_size:
             ratio = max_size / max(image.size)
             new_size = tuple(int(dim * ratio) for dim in image.size)
             image = image.resize(new_size, Image.Resampling.LANCZOS)
         
         # Create a BytesIO object to check size
-        while quality > 20:  # Don't go below quality 20
+        while quality > 15:  # Lower minimum quality
             buffer = io.BytesIO()
             image.save(buffer, format='JPEG', quality=quality, optimize=True)
             if buffer.tell() <= target_size:
                 buffer.seek(0)
                 compressed_img = Image.open(buffer)
-                # Create a new image to break reference to buffer
                 final_img = Image.new('RGB', compressed_img.size)
                 final_img.paste(compressed_img)
                 compressed_img.close()
                 buffer.close()
                 return final_img
-            quality -= 15
-            
-            # Clear buffer and force garbage collection
+            quality -= 10  # More aggressive quality reduction
             buffer.close()
             gc.collect()
         
         # If we get here, create one final attempt with lowest quality
         buffer = io.BytesIO()
-        image.save(buffer, format='JPEG', quality=20, optimize=True)
+        image.save(buffer, format='JPEG', quality=15, optimize=True)
         buffer.seek(0)
         compressed_img = Image.open(buffer)
         final_img = Image.new('RGB', compressed_img.size)
@@ -82,23 +81,17 @@ def compress_image(image, max_size_mb=0.2):
         logger.error(f"Error in compress_image: {str(e)}")
         raise
     finally:
-        # Force garbage collection
         gc.collect()
 
 def process_single_image(img_path, c, page_width, page_height, margin):
     try:
-        # Open and process one image
         with Image.open(img_path) as img:
-            # Compress the image
             compressed_img = compress_image(img)
-            
             try:
-                # Calculate dimensions
                 max_width = page_width - (2 * margin)
                 max_height = page_height - (2 * margin)
                 img_width, img_height = compressed_img.size
                 
-                # Calculate scaling factors
                 width_ratio = max_width / img_width
                 height_ratio = max_height / img_height
                 scale_factor = min(width_ratio, height_ratio)
@@ -106,42 +99,33 @@ def process_single_image(img_path, c, page_width, page_height, margin):
                 new_width = img_width * scale_factor
                 new_height = img_height * scale_factor
                 
-                # Center the image
                 x = (page_width - new_width) / 2
                 y = (page_height - new_height) / 2
                 
-                # Add to PDF
                 c.drawImage(ImageReader(compressed_img), x, y, width=new_width, height=new_height)
                 c.showPage()
                 
                 logger.info(f"Processed: {os.path.basename(img_path)}")
             finally:
-                # Ensure image is closed
                 compressed_img.close()
                 gc.collect()
-            
     except Exception as e:
         logger.error(f"Error processing {os.path.basename(img_path)}: {str(e)}")
         raise
 
 def merge_images_to_pdf(image_files):
     try:
-        # Create PDF in memory with smaller buffer size
-        output = io.BytesIO(initial_bytes=b'')  # Start with empty buffer
-        
-        # Create PDF with maximum compression
+        output = io.BytesIO(initial_bytes=b'')
         c = canvas.Canvas(output, pagesize=letter)
-        c.setPageCompression(1)  # Enable PDF compression
+        c.setPageCompression(1)
         
         page_width, page_height = letter
         margin = 40
         
-        # Process images one at a time
         for img_path in image_files:
             process_single_image(img_path, c, page_width, page_height, margin)
-            gc.collect()  # Force garbage collection after each image
+            gc.collect()
         
-        # Save PDF
         c.save()
         output.seek(0)
         return output
@@ -149,98 +133,100 @@ def merge_images_to_pdf(image_files):
         logger.error(f"Error in merge_images_to_pdf: {str(e)}")
         raise
     finally:
-        gc.collect()  # Final garbage collection
+        gc.collect()
 
-@app.route('/debug', methods=['GET'])
-def debug():
-    """Debug endpoint to verify application is running and configured correctly"""
-    debug_info = {
-        'app_root': app.root_path,
-        'template_folder': app.template_folder,
-        'templates_exist': os.path.exists(app.template_folder),
-        'templates_contents': os.listdir(app.template_folder) if os.path.exists(app.template_folder) else [],
-        'upload_folder': UPLOAD_FOLDER,
-        'upload_folder_exists': os.path.exists(UPLOAD_FOLDER),
-        'environment': os.environ.get('FLASK_ENV', 'not set'),
-        'port': os.environ.get('PORT', 'not set')
-    }
-    logger.info(f"Debug info: {debug_info}")
-    return debug_info
-
-@app.route('/health', methods=['GET'])
-def health_check():
-    """Health check endpoint"""
-    logger.info("Health check endpoint called")
-    return {"status": "healthy", "message": "Application is running"}
-
-@app.route('/', methods=['GET'])
+@app.route('/')
 def index():
     """Main page"""
-    logger.info("Rendering index page")
-    try:
-        return render_template('index.html')
-    except Exception as e:
-        logger.error(f"Error rendering index page: {str(e)}")
-        return f"Error: {str(e)}", 500
+    # Initialize session storage for files
+    if 'files' not in session:
+        session['files'] = []
+    if 'upload_id' not in session:
+        session['upload_id'] = str(uuid.uuid4())
+    
+    # Create a unique upload directory for this session
+    upload_dir = os.path.join(UPLOAD_FOLDER, session['upload_id'])
+    if not os.path.exists(upload_dir):
+        os.makedirs(upload_dir)
+    
+    return render_template('index.html')
 
 @app.route('/upload', methods=['POST'])
-def upload_files():
-    """Handle file upload and PDF generation"""
-    logger.info("Upload endpoint called")
+def upload_file():
+    """Handle single file upload"""
+    if 'file' not in request.files:
+        return jsonify({'error': 'No file part'}), 400
     
-    if 'files[]' not in request.files:
-        logger.warning("No files in request")
-        flash('No files selected')
-        return render_template('index.html')
+    file = request.files['file']
+    if file.filename == '':
+        return jsonify({'error': 'No selected file'}), 400
     
-    files = request.files.getlist('files[]')
-    
-    if not files or files[0].filename == '':
-        logger.warning("Empty files list or no filename")
-        flash('No files selected')
-        return render_template('index.html')
-    
-    # Create temporary directory for this upload
-    upload_dir = tempfile.mkdtemp()
-    saved_files = []
+    if not allowed_file(file.filename):
+        return jsonify({'error': 'Invalid file type'}), 400
     
     try:
-        for file in files:
-            if file and allowed_file(file.filename):
-                filename = secure_filename(file.filename)
-                filepath = os.path.join(upload_dir, filename)
-                file.save(filepath)
-                saved_files.append(filepath)
-                logger.info(f"Saved file: {filename}")
+        filename = secure_filename(file.filename)
+        upload_dir = os.path.join(UPLOAD_FOLDER, session['upload_id'])
+        if not os.path.exists(upload_dir):
+            os.makedirs(upload_dir)
         
-        if not saved_files:
-            logger.warning("No valid image files uploaded")
-            flash('No valid image files uploaded')
-            return render_template('index.html')
+        filepath = os.path.join(upload_dir, filename)
+        file.save(filepath)
         
-        # Generate PDF
-        logger.info("Generating PDF")
-        pdf_output = merge_images_to_pdf(saved_files)
+        # Add file to session
+        if 'files' not in session:
+            session['files'] = []
+        session['files'].append(filepath)
+        session.modified = True
+        
+        return jsonify({'success': True, 'filename': filename})
+    except Exception as e:
+        logger.error(f"Error uploading file: {str(e)}")
+        return jsonify({'error': str(e)}), 500
+
+@app.route('/merge', methods=['POST'])
+def merge_files():
+    """Merge uploaded files into PDF"""
+    try:
+        if 'files' not in session or not session['files']:
+            return jsonify({'error': 'No files uploaded'}), 400
+        
+        files = session['files']
+        pdf_output = merge_images_to_pdf(files)
         
         # Clean up
-        shutil.rmtree(upload_dir)
+        upload_dir = os.path.join(UPLOAD_FOLDER, session['upload_id'])
+        if os.path.exists(upload_dir):
+            shutil.rmtree(upload_dir)
         
-        logger.info("Sending PDF file")
+        # Clear session
+        session.pop('files', None)
+        session.pop('upload_id', None)
+        
         return send_file(
             pdf_output,
             mimetype='application/pdf',
             as_attachment=True,
             download_name='merged_receipts.pdf'
         )
-        
     except Exception as e:
-        logger.error(f"Error processing files: {str(e)}")
-        flash(f'Error processing files: {str(e)}')
-        return render_template('index.html')
-    finally:
-        # Ensure cleanup happens even if there's an error
-        if os.path.exists(upload_dir):
-            shutil.rmtree(upload_dir)
+        logger.error(f"Error merging files: {str(e)}")
+        return jsonify({'error': str(e)}), 500
+
+@app.route('/clear', methods=['POST'])
+def clear_files():
+    """Clear uploaded files"""
+    try:
+        if 'upload_id' in session:
+            upload_dir = os.path.join(UPLOAD_FOLDER, session['upload_id'])
+            if os.path.exists(upload_dir):
+                shutil.rmtree(upload_dir)
+        session.pop('files', None)
+        session.pop('upload_id', None)
+        return jsonify({'success': True})
+    except Exception as e:
+        logger.error(f"Error clearing files: {str(e)}")
+        return jsonify({'error': str(e)}), 500
 
 if __name__ == '__main__':
     port = int(os.environ.get('PORT', 10000))

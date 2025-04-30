@@ -4,6 +4,7 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Receipt Merger</title>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/browser-image-compression/2.0.1/browser-image-compression.min.js"></script>
     <style>
         body {
             font-family: Arial, sans-serif;
@@ -162,7 +163,7 @@
 
     <script>
         let uploadedFiles = [];
-        const maxFileSize = 5 * 1024 * 1024; // 5MB
+        const maxFileSize = 2 * 1024 * 1024; // 2MB
         
         function showError(message) {
             const errorDiv = document.getElementById('errorMessage');
@@ -180,7 +181,7 @@
                 const fileItem = document.createElement('div');
                 fileItem.className = 'file-item';
                 fileItem.innerHTML = `
-                    <span>${file.name}</span>
+                    <span>${file.name} (${(file.size / 1024).toFixed(1)}KB)</span>
                     <button class="remove-file" onclick="removeFile(${index})">×</button>
                 `;
                 fileList.appendChild(fileItem);
@@ -195,11 +196,37 @@
             updateFileList();
         }
 
-        async function uploadFile(file) {
-            const formData = new FormData();
-            formData.append('file', file);
-
+        async function compressImage(file) {
             try {
+                const options = {
+                    maxSizeMB: 0.1,  // 100KB target
+                    maxWidthOrHeight: 1200,
+                    useWebWorker: true,
+                    fileType: 'image/jpeg',
+                    initialQuality: 0.6,
+                };
+                
+                const compressedBlob = await imageCompression(file, options);
+                const compressedFile = new File([compressedBlob], file.name, {
+                    type: 'image/jpeg',
+                });
+                
+                console.log(`Original size: ${file.size / 1024}KB`);
+                console.log(`Compressed size: ${compressedFile.size / 1024}KB`);
+                
+                return compressedFile;
+            } catch (error) {
+                console.error('Compression error:', error);
+                throw new Error(`Failed to compress ${file.name}: ${error.message}`);
+            }
+        }
+
+        async function uploadFile(file) {
+            try {
+                const compressedFile = await compressImage(file);
+                const formData = new FormData();
+                formData.append('file', compressedFile);
+
                 const response = await fetch('/upload', {
                     method: 'POST',
                     body: formData
@@ -222,7 +249,7 @@
             
             for (let file of files) {
                 if (file.size > maxFileSize) {
-                    showError(`${file.name} is too large. Maximum file size is 5MB.`);
+                    showError(`${file.name} is too large. Maximum file size is 2MB.`);
                     continue;
                 }
                 
