@@ -214,14 +214,12 @@
                 const ocr = ocrResults[file.name];
                 let amountHtml = '';
                 
-                console.log('Displaying OCR result for', file.name, ':', ocr);
-                
                 if (ocr && ocr.success && ocr.total !== undefined && ocr.total !== null) {
-                    amountHtml = `<div class="amount">Total: $${Number(ocr.total).toFixed(2)}</div>`;
+                    amountHtml = `<div class="amount">$${Number(ocr.total).toFixed(2)}</div>`;
                 } else if (ocr && ocr.error) {
                     amountHtml = `<div class="error">${ocr.error}</div>`;
                 } else {
-                    amountHtml = `<div class="error">Processing...</div>`;
+                    amountHtml = `<div class="error">Scanning receipt...</div>`;
                 }
                 
                 fileItem.innerHTML = `

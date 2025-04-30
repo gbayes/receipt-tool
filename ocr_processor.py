@@ -26,17 +26,17 @@ def preprocess_image(image):
         raise
 
 def extract_amounts(text):
-    """Extract all currency amounts from text"""
-    logger.info("Extracting amounts from text")
+    """Extract all dollar amounts from text"""
+    logger.info("Extracting dollar amounts from text")
     logger.debug(f"Input text: {text}")
     
-    # Pattern for currency amounts (handles different formats)
-    # Examples: $123.45, $1,234.56, 123.45, 1,234.56
-    amount_pattern = r'\$?\s*\d{1,3}(?:,\d{3})*\.\d{2}'
+    # Pattern specifically for dollar amounts (must have $ sign)
+    # Examples: $123.45, $1,234.56
+    amount_pattern = r'\$\s*\d{1,3}(?:,\d{3})*\.\d{2}'
     
     # Find all matches
     amounts = re.findall(amount_pattern, text)
-    logger.debug(f"Found amounts: {amounts}")
+    logger.debug(f"Found dollar amounts: {amounts}")
     
     # Convert to float values
     float_amounts = []
@@ -44,60 +44,33 @@ def extract_amounts(text):
         # Remove $ and commas, then convert to float
         clean_amount = amount.replace('$', '').replace(',', '')
         try:
-            float_amounts.append(float(clean_amount))
-            logger.debug(f"Converted amount {amount} to {clean_amount}")
+            float_amount = float(clean_amount)
+            float_amounts.append(float_amount)
+            logger.debug(f"Converted amount {amount} to {float_amount}")
         except ValueError:
             logger.warning(f"Could not convert amount: {amount}")
             continue
     
-    logger.info(f"Extracted {len(float_amounts)} valid amounts")
+    logger.info(f"Extracted {len(float_amounts)} valid dollar amounts")
     return float_amounts
 
 def find_total_amount(text):
-    """Find the total amount on the receipt"""
-    logger.info("Finding total amount in text")
+    """Find the largest dollar amount on the receipt"""
+    logger.info("Finding largest dollar amount")
     
-    # Common patterns for total labels
-    total_patterns = [
-        r'total\s*(?:amount|sum|due)?[\s:]*(\$?\s*\d{1,3}(?:,\d{3})*\.\d{2})',
-        r'(?:sub)?total\s*(?:amount|sum|due)?[\s:]*(\$?\s*\d{1,3}(?:,\d{3})*\.\d{2})',
-        r'amount\s*(?:total|due)[\s:]*(\$?\s*\d{1,3}(?:,\d{3})*\.\d{2})',
-        r'grand\s*total[\s:]*(\$?\s*\d{1,3}(?:,\d{3})*\.\d{2})',
-        r'balance\s*due[\s:]*(\$?\s*\d{1,3}(?:,\d{3})*\.\d{2})'
-    ]
-    
-    text = text.lower()
-    logger.debug(f"Normalized text: {text}")
-    
-    # Try to find amounts with total-related labels
-    for pattern in total_patterns:
-        logger.debug(f"Trying pattern: {pattern}")
-        matches = re.findall(pattern, text, re.IGNORECASE)
-        if matches:
-            logger.debug(f"Found matches: {matches}")
-            # Clean and convert the first match
-            amount = matches[-1].replace('$', '').replace(',', '')
-            try:
-                result = float(amount)
-                logger.info(f"Found total amount with pattern: ${result:.2f}")
-                return result
-            except ValueError:
-                logger.warning(f"Could not convert matched amount: {amount}")
-                continue
-    
-    logger.info("No labeled total found, looking for largest amount")
-    # If no labeled total found, get all amounts and return the largest
+    # Get all dollar amounts
     amounts = extract_amounts(text)
+    
     if amounts:
         max_amount = max(amounts)
-        logger.info(f"Using largest amount as total: ${max_amount:.2f}")
+        logger.info(f"Largest dollar amount found: ${max_amount:.2f}")
         return max_amount
     
-    logger.warning("No amounts found in text")
+    logger.warning("No dollar amounts found in text")
     return None
 
 def process_receipt(image):
-    """Process receipt image and extract total amount"""
+    """Process receipt image and extract largest dollar amount"""
     logger.info("Starting receipt processing")
     try:
         # Preprocess the image
@@ -108,21 +81,21 @@ def process_receipt(image):
         text = pytesseract.image_to_string(processed_image)
         logger.debug(f"Extracted text: {text}")
         
-        # Find total amount
+        # Find largest dollar amount
         total = find_total_amount(text)
         
         if total is not None:
-            logger.info(f"Successfully found total amount: ${total:.2f}")
+            logger.info(f"Successfully found largest amount: ${total:.2f}")
             return {
                 'success': True,
-                'total': float(total),  # Ensure total is a float
+                'total': float(total),
                 'text': text
             }
         else:
-            logger.warning("Could not find total amount")
+            logger.warning("No dollar amounts found")
             return {
                 'success': False,
-                'error': 'Could not find total amount on receipt',
+                'error': 'No dollar amounts found on receipt',
                 'text': text
             }
     
