@@ -156,14 +156,19 @@ def index():
 @app.route('/upload', methods=['POST'])
 def upload_file():
     """Handle single file upload"""
+    logger.info("Upload endpoint called")
+    
     if 'file' not in request.files:
+        logger.warning("No file in request")
         return jsonify({'error': 'No file part'}), 400
     
     file = request.files['file']
     if file.filename == '':
+        logger.warning("Empty filename")
         return jsonify({'error': 'No selected file'}), 400
     
     if not allowed_file(file.filename):
+        logger.warning(f"Invalid file type: {file.filename}")
         return jsonify({'error': 'Invalid file type'}), 400
     
     try:
@@ -174,12 +179,13 @@ def upload_file():
         
         filepath = os.path.join(upload_dir, filename)
         file.save(filepath)
+        logger.info(f"File saved to: {filepath}")
         
         # Process receipt with OCR
-        logger.info(f"Processing OCR for file: {filename}")
+        logger.info(f"Starting OCR processing for: {filename}")
         with Image.open(filepath) as img:
             ocr_result = process_receipt(img)
-        logger.info(f"OCR result for {filename}: {ocr_result}")
+        logger.info(f"OCR completed for {filename}. Result: {ocr_result}")
         
         # Add file and OCR result to session
         if 'files' not in session:
@@ -190,6 +196,7 @@ def upload_file():
         session['files'].append(filepath)
         session['ocr_results'][filepath] = ocr_result
         session.modified = True
+        logger.info(f"Session updated with OCR results for {filename}")
         
         response_data = {
             'success': True,
@@ -199,7 +206,7 @@ def upload_file():
         logger.info(f"Sending response for {filename}: {response_data}")
         return jsonify(response_data)
     except Exception as e:
-        logger.error(f"Error uploading file: {str(e)}")
+        logger.error(f"Error processing file {file.filename}: {str(e)}", exc_info=True)
         return jsonify({'error': str(e)}), 500
 
 @app.route('/merge', methods=['POST'])
