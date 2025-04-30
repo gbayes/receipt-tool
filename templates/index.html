@@ -52,6 +52,20 @@
             border-radius: 4px;
             margin-bottom: 8px;
         }
+        .file-item .file-info {
+            flex-grow: 1;
+            margin-right: 10px;
+        }
+        .file-item .amount {
+            color: #28a745;
+            font-weight: bold;
+            margin-right: 10px;
+        }
+        .file-item .error {
+            color: #dc3545;
+            font-size: 0.9em;
+            font-style: italic;
+        }
         .file-item .remove-file {
             color: #dc3545;
             cursor: pointer;
@@ -163,6 +177,7 @@
 
     <script>
         let uploadedFiles = [];
+        let ocrResults = {};  // Store OCR results
         const maxFileSize = 2 * 1024 * 1024; // 2MB
         
         function showError(message) {
@@ -180,8 +195,23 @@
             uploadedFiles.forEach((file, index) => {
                 const fileItem = document.createElement('div');
                 fileItem.className = 'file-item';
+                
+                const ocr = ocrResults[file.name] || {};
+                let amountHtml = '';
+                
+                if (ocr.success) {
+                    amountHtml = `<span class="amount">$${ocr.total.toFixed(2)}</span>`;
+                } else if (ocr.error) {
+                    amountHtml = `<span class="error">${ocr.error}</span>`;
+                }
+                
                 fileItem.innerHTML = `
-                    <span>${file.name} (${(file.size / 1024).toFixed(1)}KB)</span>
+                    <div class="file-info">
+                        <span>${file.name}</span>
+                        <br>
+                        <small>(${(file.size / 1024).toFixed(1)}KB)</small>
+                        ${amountHtml}
+                    </div>
                     <button class="remove-file" onclick="removeFile(${index})">×</button>
                 `;
                 fileList.appendChild(fileItem);
@@ -192,6 +222,8 @@
         }
 
         function removeFile(index) {
+            const filename = uploadedFiles[index].name;
+            delete ocrResults[filename];
             uploadedFiles.splice(index, 1);
             updateFileList();
         }
@@ -236,6 +268,10 @@
                 if (!response.ok) {
                     throw new Error(result.error || 'Upload failed');
                 }
+                
+                // Store OCR result
+                ocrResults[file.name] = result.ocr_result;
+                
                 return result;
             } catch (error) {
                 throw new Error(`Failed to upload ${file.name}: ${error.message}`);

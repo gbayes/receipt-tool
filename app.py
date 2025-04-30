@@ -5,12 +5,14 @@ import shutil
 import logging
 import gc
 import uuid
+import json
 from flask import Flask, render_template, request, send_file, flash, jsonify, session
 from werkzeug.utils import secure_filename
 from PIL import Image
 from reportlab.pdfgen import canvas
 from reportlab.lib.pagesizes import letter
 from reportlab.lib.utils import ImageReader
+from ocr_processor import process_receipt
 
 # Configure logging
 logging.basicConfig(
@@ -173,13 +175,25 @@ def upload_file():
         filepath = os.path.join(upload_dir, filename)
         file.save(filepath)
         
-        # Add file to session
+        # Process receipt with OCR
+        with Image.open(filepath) as img:
+            ocr_result = process_receipt(img)
+        
+        # Add file and OCR result to session
         if 'files' not in session:
             session['files'] = []
+        if 'ocr_results' not in session:
+            session['ocr_results'] = {}
+        
         session['files'].append(filepath)
+        session['ocr_results'][filepath] = ocr_result
         session.modified = True
         
-        return jsonify({'success': True, 'filename': filename})
+        return jsonify({
+            'success': True,
+            'filename': filename,
+            'ocr_result': ocr_result
+        })
     except Exception as e:
         logger.error(f"Error uploading file: {str(e)}")
         return jsonify({'error': str(e)}), 500
@@ -192,6 +206,17 @@ def merge_files():
             return jsonify({'error': 'No files uploaded'}), 400
         
         files = session['files']
+        ocr_results = session.get('ocr_results', {})
+        
+        # Sort files by total amount if available
+        def get_total(filepath):
+            result = ocr_results.get(filepath, {})
+            if result.get('success', False):
+                return result.get('total', 0)
+            return 0
+        
+        files = sorted(files, key=get_total, reverse=True)
+        
         pdf_output = merge_images_to_pdf(files)
         
         # Clean up
@@ -201,6 +226,7 @@ def merge_files():
         
         # Clear session
         session.pop('files', None)
+        session.pop('ocr_results', None)
         session.pop('upload_id', None)
         
         return send_file(
