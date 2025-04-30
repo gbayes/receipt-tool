@@ -2,13 +2,12 @@ FROM python:3.11-slim
 
 WORKDIR /app
 
-# Install system dependencies including Tesseract OCR
+# Install system dependencies
 RUN apt-get update && \
     apt-get install -y --no-install-recommends \
     build-essential \
-    tesseract-ocr \
-    libtesseract-dev \
-    tesseract-ocr-eng \
+    libopencv-dev \
+    python3-opencv \
     && rm -rf /var/lib/apt/lists/*
 
 # Copy requirements and install dependencies
