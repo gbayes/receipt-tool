@@ -115,14 +115,14 @@ def process_receipt(image):
             logger.info(f"Successfully found total amount: ${total:.2f}")
             return {
                 'success': True,
-                'total': total,
+                'total': float(total),  # Ensure total is a float
                 'text': text
             }
         else:
             logger.warning("Could not find total amount")
             return {
                 'success': False,
-                'error': 'Could not find total amount',
+                'error': 'Could not find total amount on receipt',
                 'text': text
             }
     
@@ -130,5 +130,5 @@ def process_receipt(image):
         logger.error(f"Error processing receipt: {str(e)}", exc_info=True)
         return {
             'success': False,
-            'error': str(e)
+            'error': f"Failed to process receipt: {str(e)}"
         } 

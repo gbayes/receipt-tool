@@ -69,6 +69,7 @@
             border-radius: 4px;
             min-width: 80px;
             text-align: right;
+            margin-left: 10px;
         }
         .error {
             color: #dc3545;
@@ -77,6 +78,7 @@
             padding: 4px 8px;
             background-color: #fff3f3;
             border-radius: 4px;
+            margin-left: 10px;
         }
         .file-item .remove-file {
             color: #dc3545;
@@ -190,12 +192,12 @@
     <script>
         let uploadedFiles = [];
         let ocrResults = {};
-        const maxFileSize = 2 * 1024 * 1024; // 2MB
-        
+
         function showError(message) {
             const errorDiv = document.getElementById('errorMessage');
             errorDiv.textContent = message;
             errorDiv.style.display = 'block';
+            console.error('Error:', message);
             setTimeout(() => {
                 errorDiv.style.display = 'none';
             }, 5000);
@@ -205,29 +207,21 @@
             const fileList = document.getElementById('fileList');
             fileList.innerHTML = '';
             
-            console.log('Updating file list. Current OCR results:', ocrResults);
-            
             uploadedFiles.forEach((file, index) => {
-                console.log(`Processing file ${file.name}:`, file);
                 const fileItem = document.createElement('div');
                 fileItem.className = 'file-item';
                 
                 const ocr = ocrResults[file.name];
-                console.log(`OCR result for ${file.name}:`, ocr);
-                
                 let amountHtml = '';
-                if (ocr && ocr.success && typeof ocr.total === 'number') {
-                    console.log(`Adding amount display for ${file.name}: $${ocr.total.toFixed(2)}`);
-                    amountHtml = `
-                        <div class="amount">
-                            <strong>Total:</strong> $${ocr.total.toFixed(2)}
-                        </div>`;
+                
+                console.log('Displaying OCR result for', file.name, ':', ocr);
+                
+                if (ocr && ocr.success && ocr.total !== undefined && ocr.total !== null) {
+                    amountHtml = `<div class="amount">Total: $${Number(ocr.total).toFixed(2)}</div>`;
                 } else if (ocr && ocr.error) {
-                    console.log(`Adding error display for ${file.name}: ${ocr.error}`);
                     amountHtml = `<div class="error">${ocr.error}</div>`;
                 } else {
-                    console.log(`No valid OCR result for ${file.name}`);
-                    amountHtml = `<div class="error">No amount detected</div>`;
+                    amountHtml = `<div class="error">Processing...</div>`;
                 }
                 
                 fileItem.innerHTML = `
@@ -255,63 +249,30 @@
             updateFileList();
         }
 
-        async function compressImage(file) {
-            try {
-                const options = {
-                    maxSizeMB: 0.1,  // 100KB target
-                    maxWidthOrHeight: 1200,
-                    useWebWorker: true,
-                    fileType: 'image/jpeg',
-                    initialQuality: 0.6,
-                };
-                
-                const compressedBlob = await imageCompression(file, options);
-                const compressedFile = new File([compressedBlob], file.name, {
-                    type: 'image/jpeg',
-                });
-                
-                console.log(`Original size: ${file.size / 1024}KB`);
-                console.log(`Compressed size: ${compressedFile.size / 1024}KB`);
-                
-                return compressedFile;
-            } catch (error) {
-                console.error('Compression error:', error);
-                throw new Error(`Failed to compress ${file.name}: ${error.message}`);
-            }
-        }
-
         async function uploadFile(file) {
             try {
-                console.log('Starting upload for:', file.name);
-                const compressedFile = await compressImage(file);
                 const formData = new FormData();
-                formData.append('file', compressedFile);
+                formData.append('file', file);
 
-                console.log('Sending request to server...');
                 const response = await fetch('/upload', {
                     method: 'POST',
                     body: formData
                 });
 
-                console.log('Received response:', response);
                 const result = await response.json();
-                console.log('Response data:', result);
-
                 if (!response.ok) {
                     throw new Error(result.error || 'Upload failed');
                 }
                 
-                // Store OCR result and update display
-                console.log('Storing OCR result:', result.ocr_result);
-                ocrResults[file.name] = result.ocr_result;
-                
-                // Force update the display immediately
-                updateFileList();
-                
+                if (result.ocr_result) {
+                    ocrResults[file.name] = result.ocr_result;
+                    console.log('OCR result for', file.name, ':', result.ocr_result);
+                }
                 return result;
             } catch (error) {
                 console.error('Upload error:', error);
-                throw new Error(`Failed to upload ${file.name}: ${error.message}`);
+                showError(`Failed to upload ${file.name}: ${error.message}`);
+                throw error;
             }
         }
 
@@ -321,30 +282,69 @@
             progressContainer.style.display = 'block';
             
             for (let file of files) {
-                if (file.size > maxFileSize) {
-                    showError(`${file.name} is too large. Maximum file size is 2MB.`);
-                    continue;
-                }
-                
-                if (!file.type.match('image.*')) {
-                    showError(`${file.name} is not an image file.`);
-                    continue;
-                }
-
                 try {
                     await uploadFile(file);
                     uploadedFiles.push(file);
                     progressBar.style.width = `${(uploadedFiles.length / files.length) * 100}%`;
                 } catch (error) {
-                    showError(error.message);
+                    console.error('Error handling file:', error);
                 }
             }
 
+            updateFileList();
             setTimeout(() => {
                 progressContainer.style.display = 'none';
                 progressBar.style.width = '0%';
             }, 1000);
         }
+
+        // Drag and drop handlers
+        const uploadArea = document.getElementById('uploadArea');
+        
+        uploadArea.addEventListener('dragenter', (e) => {
+            e.preventDefault();
+            e.stopPropagation();
+            uploadArea.classList.add('dragover');
+        });
+
+        uploadArea.addEventListener('dragover', (e) => {
+            e.preventDefault();
+            e.stopPropagation();
+            uploadArea.classList.add('dragover');
+        });
+
+        uploadArea.addEventListener('dragleave', (e) => {
+            e.preventDefault();
+            e.stopPropagation();
+            const rect = uploadArea.getBoundingClientRect();
+            if (
+                e.clientX < rect.left ||
+                e.clientX >= rect.right ||
+                e.clientY < rect.top ||
+                e.clientY >= rect.bottom
+            ) {
+                uploadArea.classList.remove('dragover');
+            }
+        });
+
+        uploadArea.addEventListener('drop', async (e) => {
+            e.preventDefault();
+            e.stopPropagation();
+            uploadArea.classList.remove('dragover');
+            const files = Array.from(e.dataTransfer.files).filter(file => {
+                const ext = file.name.split('.').pop().toLowerCase();
+                return ['jpg', 'jpeg', 'png', 'tiff', 'bmp'].includes(ext);
+            });
+            if (files.length > 0) {
+                await handleFiles(files);
+            } else {
+                showError('Please drop only supported image files (JPG, PNG, TIFF, BMP)');
+            }
+        });
+
+        document.getElementById('fileInput').addEventListener('change', (e) => {
+            handleFiles(e.target.files);
+        });
 
         async function mergePDF() {
             if (uploadedFiles.length === 0) {
@@ -379,6 +379,7 @@
 
                 // Clear the file list after successful merge
                 uploadedFiles = [];
+                ocrResults = {};
                 updateFileList();
                 
                 // Clear the server-side files
@@ -390,28 +391,6 @@
                 mergeButton.disabled = false;
             }
         }
-
-        // Drag and drop handlers
-        const uploadArea = document.getElementById('uploadArea');
-        
-        uploadArea.addEventListener('dragover', (e) => {
-            e.preventDefault();
-            uploadArea.classList.add('dragover');
-        });
-
-        uploadArea.addEventListener('dragleave', () => {
-            uploadArea.classList.remove('dragover');
-        });
-
-        uploadArea.addEventListener('drop', (e) => {
-            e.preventDefault();
-            uploadArea.classList.remove('dragover');
-            handleFiles(e.dataTransfer.files);
-        });
-
-        document.getElementById('fileInput').addEventListener('change', (e) => {
-            handleFiles(e.target.files);
-        });
     </script>
 </body>
 </html> 
